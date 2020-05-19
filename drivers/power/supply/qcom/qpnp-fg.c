@@ -9105,6 +9105,7 @@ static int fg_probe(struct platform_device *pdev)
 	 */
 	chip->batt_psy_name = "battery";
 
+#ifdef CONFIG_DEBUG_FS
 	if (chip->mem_base) {
 		rc = fg_dfs_create(chip);
 		if (rc < 0) {
@@ -9112,6 +9113,7 @@ static int fg_probe(struct platform_device *pdev)
 			goto power_supply_unregister;
 		}
 	}
+#endif
 
 	/* Fake temperature till the actual temperature is read */
 	chip->last_good_temp = 250;
@@ -9130,8 +9132,10 @@ static int fg_probe(struct platform_device *pdev)
 
 	return rc;
 
+#ifdef CONFIG_DEBUG_FS
 power_supply_unregister:
 	power_supply_unregister(chip->bms_psy);
+#endif
 cancel_work:
 	fg_cancel_all_works(chip);
 of_init_fail:
