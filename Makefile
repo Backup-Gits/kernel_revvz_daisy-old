@@ -301,14 +301,14 @@ CONFIG_SHELL := $(shell if [ -x "$$BASH" ]; then echo $$BASH; \
 	  else if [ -x /bin/bash ]; then echo /bin/bash; \
 	  else echo sh; fi ; fi)
 
-HOSTCC       = gcc -flto=4
+HOSTCC       = gcc
 HOSTCXX      = g++
-HOSTCFLAGS   = -Wall -Wmissing-prototypes -Wstrict-prototypes -O3 -flto=4 -fomit-frame-pointer -std=gnu89 -fgcse-las -fgraphite -fgraphite-identity -floop-flatten -floop-parallelize-all -ftree-loop-linear -floop-interchange -floop-strip-mine -floop-block
-HOSTCXXFLAGS = -O3 -flto=4 -fgcse-las -fgraphite -fgraphite-identity -floop-flatten -floop-parallelize-all -ftree-loop-linear -floop-interchange -floop-strip-mine -floop-block
+HOSTCFLAGS   := -Wall -Wmissing-prototypes -Wstrict-prototypes -O3 -fomit-frame-pointer -std=gnu89
+HOSTCXXFLAGS = -O3
 
 ifeq ($(shell $(HOSTCC) -v 2>&1 | grep -c "clang version"), 1)
 HOSTCFLAGS  += -Wno-unused-value -Wno-unused-parameter \
-		-Wno-missing-field-initializers -fno-delete-null-pointer-checks
+		-Wno-missing-field-initializers
 endif
 
 # Decide whether to build built-in, modular, or both.
@@ -344,7 +344,7 @@ include scripts/Kbuild.include
 # Make variables (CC, etc...)
 AS		= $(CROSS_COMPILE)as
 LD		= $(CROSS_COMPILE)ld
-CC		= ccache $(CROSS_COMPILE)gcc
+CC		= $(CROSS_COMPILE)gcc
 LDGOLD		= $(CROSS_COMPILE)ld.gold
 CPP		= $(CC) -E
 AR		= $(CROSS_COMPILE)ar
@@ -393,16 +393,16 @@ KBUILD_AFLAGS   := -D__ASSEMBLY__
 KBUILD_CFLAGS   := -Wall -Wundef -Wstrict-prototypes -Wno-trigraphs \
 		   -fno-strict-aliasing -fno-common -fshort-wchar \
 		   -Werror-implicit-function-declaration \
-		   -Wno-format-security -ffast-math -mtune=cortex-a53 -mcpu=cortex-a53+crc+crypto  \
-		   -std=gnu89 -O3 
-KBUILD_CPPFLAGS := -D__KERNEL__ -O3 -mtune=cortex-a53 -mcpu=cortex-a53+crc+crypto 
+		   -Wno-format-security \
+		   -std=gnu89
+KBUILD_CPPFLAGS := -D__KERNEL__
 KBUILD_AFLAGS_KERNEL :=
 KBUILD_CFLAGS_KERNEL :=
-KBUILD_AFLAGS   := -D__ASSEMBLY__ -O3
 KBUILD_AFLAGS_MODULE  := -DMODULE
-KBUILD_CFLAGS_MODULE  := -DMODULE -fno-pic -O3 -mtune=cortex-a53 -mcpu=cortex-a53+crc+crypto 
+KBUILD_CFLAGS_MODULE  := -DMODULE
 KBUILD_LDFLAGS_MODULE := -T $(srctree)/scripts/module-common.lds
 GCC_PLUGINS_CFLAGS :=
+CLANG_FLAGS :=
 
 # Read KERNELRELEASE from include/config/kernel.release (if it exists)
 KERNELRELEASE = $(shell cat include/config/kernel.release 2> /dev/null)
@@ -509,8 +509,11 @@ endif
 
 ifeq ($(cc-name),clang)
 ifneq ($(CROSS_COMPILE),)
-CLANG_TRIPLE    ?= $(CROSS_COMPILE)
-CLANG_FLAGS	:= --target=$(notdir $(CLANG_TRIPLE:%-=%))
+CLANG_TRIPLE	?= $(CROSS_COMPILE)
+CLANG_FLAGS	+= --target=$(notdir $(CLANG_TRIPLE:%-=%))
+ifeq ($(shell $(srctree)/scripts/clang-android.sh $(CC) $(CLANG_FLAGS)), y)
+$(error "Clang with Android --target detected. Did you specify CLANG_TRIPLE?")
+endif
 GCC_TOOLCHAIN_DIR := $(dir $(shell which $(CROSS_COMPILE)elfedit))
 CLANG_FLAGS	+= --prefix=$(GCC_TOOLCHAIN_DIR)$(notdir $(CROSS_COMPILE))
 GCC_TOOLCHAIN	:= $(realpath $(GCC_TOOLCHAIN_DIR)/..)
@@ -522,9 +525,17 @@ CLANG_FLAGS	+= -no-integrated-as
 CLANG_FLAGS	+= -Werror=unknown-warning-option
 KBUILD_CFLAGS	+= $(CLANG_FLAGS)
 KBUILD_AFLAGS	+= $(CLANG_FLAGS)
+else
+
+KBUILD_CFLAGS += $(call cc-option,-fno-delete-null-pointer-checks,)
+# These warnings generated too much noise in a regular build.
+# Use make W=1 to enable them (see scripts/Makefile.build)
+KBUILD_CFLAGS += $(call cc-disable-warning, unused-but-set-variable)
+KBUILD_CFLAGS += $(call cc-disable-warning, unused-const-variable)
 KBUILD_CFLAGS += $(call cc-disable-warning, maybe-uninitialized)
 KBUILD_CFLAGS += $(call cc-disable-warning, unused-variable)
 endif
+
 
 ifeq ($(mixed-targets),1)
 # ===========================================================================
@@ -637,7 +648,9 @@ all: vmlinux
 
 KBUILD_CFLAGS	+= $(call cc-option,-fno-PIE)
 KBUILD_AFLAGS	+= $(call cc-option,-fno-PIE)
-CFLAGS_GCOV	:= -fprofile-arcs -ftest-coverage -fno-tree-loop-im $(call cc-disable-warning,maybe-uninitialized,)
+CFLAGS_GCOV	:= -fprofile-arcs -ftest-coverage \
+	$(call cc-option,-fno-tree-loop-im) \
+	$(call cc-disable-warning,maybe-uninitialized,)
 CFLAGS_KCOV	:= $(call cc-option,-fsanitize-coverage=trace-pc,)
 export CFLAGS_GCOV CFLAGS_KCOV
 
@@ -647,7 +660,7 @@ ifdef CONFIG_LTO_CLANG
 # use GNU gold with LLVMgold for LTO linking, and LD for vmlinux_link
 LDFINAL_vmlinux := $(LD)
 LD		:= $(LDGOLD)
-LDFLAGS		+= -Wl,-dead_strip -plugin LLVMgold.so
+LDFLAGS		+= -plugin LLVMgold.so
 # use llvm-ar for building symbol tables from IR files, and llvm-dis instead
 # of objdump for processing symbol versions and exports
 LLVM_AR		:= llvm-ar
@@ -696,7 +709,7 @@ export LDFINAL_vmlinux LDFLAGS_FINAL_vmlinux
 endif
 
 ifdef CONFIG_CFI_CLANG
-cfi-clang-flags	+= -fsanitize=cfi
+cfi-clang-flags	+= -fsanitize=cfi $(call cc-option, -fsplit-lto-unit)
 DISABLE_CFI_CLANG := -fno-sanitize=cfi
 ifdef CONFIG_MODULES
 cfi-clang-flags	+= -fsanitize-cfi-cross-dso
@@ -726,6 +739,10 @@ ifdef CONFIG_CC_OPTIMIZE_FOR_SIZE
 KBUILD_CFLAGS   += -Os
 else
 KBUILD_CFLAGS   += -O3
+endif
+
+ifdef CONFIG_CC_WERROR
+KBUILD_CFLAGS	+= -Werror
 endif
 
 # Tell gcc to never replace conditional load with a non-conditional one
@@ -778,10 +795,16 @@ KBUILD_CFLAGS += $(stackp-flag)
 
 ifeq ($(cc-name),clang)
 KBUILD_CPPFLAGS += $(call cc-option,-Qunused-arguments,)
+KBUILD_CFLAGS += $(call cc-disable-warning, unused-variable)
 KBUILD_CFLAGS += $(call cc-disable-warning, format-invalid-specifier)
 KBUILD_CFLAGS += $(call cc-disable-warning, gnu)
-KBUILD_CFLAGS += $(call cc-disable-warning, address-of-packed-member)
 KBUILD_CFLAGS += $(call cc-disable-warning, duplicate-decl-specifier)
+KBUILD_CFLAGS += $(call cc-option, -Wno-undefined-optimized)
+KBUILD_CFLAGS += $(call cc-option, -Wno-tautological-constant-out-of-range-compare)
+KBUILD_CFLAGS += $(call cc-option, -Wno-sometimes-uninitialized)
+KBUILD_CFLAGS += -Wno-asm-operand-widths
+KBUILD_CFLAGS += -Wno-initializer-overrides
+
 # Quiet clang warning: comparison of unsigned expression < 0 is always false
 KBUILD_CFLAGS += $(call cc-disable-warning, tautological-compare)
 # CLANG uses a _MergedGlobals as optimization, but this breaks modpost, as the
@@ -789,16 +812,13 @@ KBUILD_CFLAGS += $(call cc-disable-warning, tautological-compare)
 # See modpost pattern 2
 KBUILD_CFLAGS += $(call cc-option, -mno-global-merge,)
 KBUILD_CFLAGS += $(call cc-option, -fcatch-undefined-behavior)
-KBUILD_CFLAGS += $(call cc-option, -no-integrated-as)
-KBUILD_AFLAGS += $(call cc-option, -no-integrated-as)
-KBUILD_CFLAGS += -Wno-sometimes-uninitialized -Wno-asm-operand-widths \
-		 -Wno-typedef-redefinition -Wno-non-literal-null-conversion -Wno-header-guard \
-		 -Wno-constant-conversion -Wno-enum-conversion \
-		 -fno-integrated-as -Wno-gnu-variable-sized-type-not-at-end\
-         -Wno-gnu-folding-constant -Wno-tautological-compare -Wno-address-of-packed-member\
-         -Wno-tautological-pointer-compare -Wno-gnu-designator -Wno-pointer-bool-conversion\
-         -Wno-tautological-constant-out-of-range-compare\
-
+KBUILD_CFLAGS += $(call cc-option, -mllvm -polly) \
+		 $(call cc-option, -mllvm -polly-run-dce) \
+		 $(call cc-option, -mllvm -polly-run-inliner) \
+		 $(call cc-option, -mllvm -polly-opt-fusion=max) \
+		 $(call cc-option, -mllvm -polly-ast-use-context) \
+		 $(call cc-option, -mllvm -polly-detect-keep-going) \
+		 $(call cc-option, -mllvm -polly-vectorizer=stripmine)
 else
 
 # These warnings generated too much noise in a regular build.
@@ -901,9 +921,6 @@ KBUILD_CFLAGS	+= $(call cc-option,-fmerge-constants)
 # Make sure -fstack-check isn't enabled (like gentoo apparently did)
 KBUILD_CFLAGS  += $(call cc-option,-fno-stack-check,)
 
-# conserve stack if available
-KBUILD_CFLAGS   += $(call cc-option,-fconserve-stack)
-
 # disallow errors like 'EXPORT_GPL(foo);' with missing header
 KBUILD_CFLAGS   += $(call cc-option,-Werror=implicit-int)
 
@@ -945,7 +962,7 @@ KBUILD_CFLAGS   += $(ARCH_CFLAGS)   $(KCFLAGS)
 LDFLAGS_BUILD_ID = $(patsubst -Wl$(comma)%,%,\
 			      $(call cc-ldoption, -Wl$(comma)--build-id,))
 KBUILD_LDFLAGS_MODULE += $(LDFLAGS_BUILD_ID)
-LDFLAGS_vmlinux += $(LDFLAGS_BUILD_ID) -flto
+LDFLAGS_vmlinux += $(LDFLAGS_BUILD_ID)
 
 ifdef CONFIG_LD_DEAD_CODE_DATA_ELIMINATION
 LDFLAGS_vmlinux	+= $(call ld-option, --gc-sections,)
@@ -1276,7 +1293,7 @@ firmware_install:
 export INSTALL_HDR_PATH = $(objtree)/usr
 
 # If we do an all arch process set dst to asm-$(hdr-arch)
-hdr-dst = $(if $(KBUILD_HEADERS), dst=include/asm-$(hdr-arch), dst=include/asm)
+hdr-dst = $(if $(KBUILD_HEADERS), dst=include/arch-$(hdr-arch), dst=include)
 
 PHONY += archheaders
 archheaders:
@@ -1297,7 +1314,7 @@ headers_install: __headers
 	$(if $(wildcard $(srctree)/arch/$(hdr-arch)/include/uapi/asm/Kbuild),, \
 	  $(error Headers not exportable for the $(SRCARCH) architecture))
 	$(Q)$(MAKE) $(hdr-inst)=include/uapi
-	$(Q)$(MAKE) $(hdr-inst)=arch/$(hdr-arch)/include/uapi/asm $(hdr-dst)
+	$(Q)$(MAKE) $(hdr-inst)=arch/$(hdr-arch)/include/uapi $(hdr-dst)
 	$(Q)$(MAKE) $(hdr-inst)=techpack
 
 PHONY += headers_check_all
@@ -1307,7 +1324,7 @@ headers_check_all: headers_install_all
 PHONY += headers_check
 headers_check: headers_install
 	$(Q)$(MAKE) $(hdr-inst)=include/uapi HDRCHECK=1
-	$(Q)$(MAKE) $(hdr-inst)=arch/$(hdr-arch)/include/uapi/asm $(hdr-dst) HDRCHECK=1
+	$(Q)$(MAKE) $(hdr-inst)=arch/$(hdr-arch)/include/uapi $(hdr-dst) HDRCHECK=1
 	$(Q)$(MAKE) $(hdr-inst)=techpack HDRCHECK=1
 
 # ---------------------------------------------------------------------------
