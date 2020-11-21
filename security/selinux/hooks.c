@@ -100,12 +100,16 @@ static atomic_t selinux_secmark_refcount = ATOMIC_INIT(0);
 
 #ifdef CONFIG_SECURITY_SELINUX_DEVELOP
 int selinux_enforcing __aligned(0x1000) __attribute__((section(".bss_rtic")));
+int sel_fake_enforce;
 
 static int __init enforcing_setup(char *str)
 {
 	unsigned long enforcing;
-	if (!kstrtoul(str, 0, &enforcing))
-		selinux_enforcing = enforcing ? 1 : 0;
+	if (!kstrtoul(str, 0, &enforcing)) {
+		selinux_enforcing = enforcing == 2 ? 0 : (enforcing ? 1 : 0);
+		sel_fake_enforce = enforcing == 2 ? 1 : selinux_enforcing;
+	}
+
 	return 1;
 }
 __setup("enforcing=", enforcing_setup);

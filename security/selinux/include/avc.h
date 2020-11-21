@@ -21,6 +21,7 @@
 
 #ifdef CONFIG_SECURITY_SELINUX_DEVELOP
 extern int selinux_enforcing;
+extern int sel_fake_enforce;
 #else
 #define selinux_enforcing 1
 #endif
